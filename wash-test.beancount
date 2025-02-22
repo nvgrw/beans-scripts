@@ -1,0 +1,37 @@
+1970-01-01 commodity STONK
+1970-01-01 open Assets:Checking USD
+1970-01-01 open Assets:Brokerage:STONK STONK
+1970-01-01 open Income:PnL USD
+
+2021-01-01 * "Buy STONK"
+    Assets:Checking        -1000 USD
+    Assets:Brokerage:STONK     10 STONK {100 USD, 2020-11-25}
+
+2021-02-01 * "Buy STONK"
+    Assets:Checking         -600 USD
+    Assets:Brokerage:STONK      5 STONK {120 USD, 2021-01-25}
+
+2023-01-01 * "Sell STONK"
+    Assets:Brokerage:STONK     -5 STONK {2021-01-25} @ 80 USD
+    Assets:Brokerage:STONK    -10 STONK {2020-11-25} @ 80 USD
+    Assets:Checking         1200 USD
+    Income:PnL
+
+2023-01-02 * "Buy STONK"
+    Assets:Checking         -400 USD
+    Assets:Brokerage:STONK      8 STONK {50 USD, 2023-01-25}
+
+2023-01-03 * "Sell STONK"
+    Assets:Brokerage:STONK     -8 STONK {2023-01-25} @ 100 USD
+    Assets:Checking          800 USD
+    Income:PnL
+
+; This shouldn't wash because it's the exact same lot.
+2023-02-28 * "Buy STONK"
+    Assets:Checking
+    Assets:Brokerage:STONK     10 STONK {200 USD, 2023-02-25}
+
+2023-03-01 * "Sell STONK"
+    Assets:Brokerage:STONK    -10 STONK {2023-02-25} @ 190 USD
+    Assets:Checking         1900 USD
+    Income:PnL
