@@ -1,0 +1,12 @@
+include "common.beancount"
+
+; Buy then sell at gain within 30 days.
+
+2025-02-01 * "Buy"
+    Assets:Checking -1000 USD
+    Assets:Brokerage:STONK 10 STONK {100 USD, 2025-02-01}
+
+2025-02-02 * "Sell"
+    Assets:Brokerage:STONK -10 STONK {2025-02-01} @ 110 USD
+    Assets:Checking 1100 USD
+    Income:PnL

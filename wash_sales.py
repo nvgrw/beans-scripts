@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
@@ -136,37 +137,63 @@ def basis_proceeds(
     return basis, proceeds, holding_adjusted_basis
 
 
-# Returns a generator of BUY TxnEntry transactions that are candidates.
-def find_candidates(subject: TxnEntry, txns: List[TxnEntry]) -> Generator[TxnEntry, None, None]:
+# Returns a list of BUY TxnEntry transactions that are candidates, and the
+# number of shares remaining for the corresponding lots at the point of the
+# sale.
+def find_candidates(
+    cost_to_buy_txn: Dict[bn.Cost, TxnEntry], subject: TxnEntry, txns: List[TxnEntry]
+) -> Generator[TxnEntry, None, None]:
     start_date: date = subject.date - timedelta(days=30)
     end_date: date = subject.date + timedelta(days=30)
     subject_costs = {posting.cost for posting in subject.filtered_postings}
+
+    # Records all lots and # of shares available to wash with the subject.
     inv = bn.Inventory()
+    seen_subject = False
     for txn in txns:
         if txn.txn == subject.txn:
-            # TODO: we should also exclude shares that have already been disposed of.
-            # maybe some kind of pre and post inv
+            seen_subject = True
             continue
+        if not seen_subject or (seen_subject and txn.type == TxnType.BUY):
+            # If subject has not been seen, record buy + sell txns in the inventory to know what is available.
+            # If subject has been seen, only record buy txns to understand what can be washed with.
+            # Augmentation is NOT SUPPORTED.
+            for posting in txn.filtered_postings:
+                prev_position, match_result = inv.add_position(posting)
+                assert (
+                    match_result != bn_inventory.MatchResult.AUGMENTED
+                    and match_result != bn_inventory.MatchResult.IGNORED
+                ), "Cost can neither be augmented nor ignored"
+
+                # A deleted position is not reflected in the inventory, but we
+                # need to record the number of shares.
+                if (
+                    match_result == bn_inventory.MatchResult.REDUCED
+                    and prev_position is not None
+                ):
+                    curr_position = inv.get(
+                        (posting.units.currency, prev_position.cost)
+                    )
+                    if curr_position is None:
+                        cost_to_buy_txn[prev_position.cost].shares = Decimal()
+
+    # Update buy txns with share counts that are still held or will be in the future.
+    # TODO: This value should probably just be returned instead of overloading BUY.shares
+    for position in inv.get_positions():
+        cost_to_buy_txn[position.cost].shares = position.units.number
+
+    for txn in txns:
         if txn.type != TxnType.BUY:
-            # only wash with buy txns
-            continue
+            continue  # Only wash with BUY txns and not subject (which is a SELL)
         if txn.date < start_date or txn.date > end_date:
-            continue
-        if txn.replaced >= txn.shares:
-            continue
+            continue  # Transaction outside window
+        if txn.shares <= bn.ZERO or txn.replaced >= txn.shares:
+            continue  # No shares left
         assert len(txn.filtered_postings) == 1, "Each BUY should have one posting."
 
         posting = txn.filtered_postings[0]
         if posting.cost in subject_costs:
-            continue
-
-        _, match_result = inv.add_position(posting)
-        if match_result != bn_inventory.MatchResult.CREATED:
-            # probably won't ever happen due to pre-filtering
-            raise ValueError(
-                "Got match result that wasn't created but I don't know how to handle those. ",
-                posting,
-            )
+            continue  # Same lot doesn't wash
 
         yield txn
 
@@ -188,10 +215,9 @@ def calculate_washes(cost_to_buy_txn: Dict[bn.Cost, TxnEntry], txns: List[TxnEnt
 
         per_share_disallowed_gain = bn.Amount = bn.amount.div(gain, sale.shares)
         outstanding = sale.shares
-        for candidate in find_candidates(sale, txns):
+        for candidate in find_candidates(cost_to_buy_txn, sale, txns):
             if outstanding == bn.ZERO:
-                # Exhausted, all shares replaced.
-                break
+                break  # Exhausted, all shares replaced.
             sale.code_w = True  # W indicates that this is a wash sale
 
             replaced = min(candidate.shares - candidate.replaced, outstanding)
