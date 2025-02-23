@@ -18,7 +18,6 @@ include "common.beancount"
     Assets:Checking         900 USD
     Income:PnL
 
-; falsely washing against the first but it's already gone!
 2023-01-04 * "Sell"
     Assets:Brokerage:STONK    -10 STONK {2023-01-02} @ 90 USD
     Assets:Checking         900 USD

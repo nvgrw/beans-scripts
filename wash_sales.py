@@ -84,7 +84,7 @@ def preprocess(
                         "txn_type was not SELL, but found a reduction of the inventory."
                     )
             else:
-                raise ValueError("Don't know how to handle match result ", match_result)
+                raise ValueError("Don't know how to handle match result ", match_result, posting)
             shares += abs(posting.units.number)
 
         if txn_type is None or len(filtered_postings) == 0:
@@ -309,6 +309,7 @@ def main(filename: str, commodity: str):
         tes
     )
     calculate_washes(cost_to_buy_txn_entry, tes)
+    # print("\n\n".join(str(te) for te in tes))
     print(generate_8949(cost_to_buy_txn_entry, commodity, tes))
 
 
