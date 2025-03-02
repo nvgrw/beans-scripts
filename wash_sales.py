@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
+import copy
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
@@ -40,8 +41,8 @@ class TxnEntry:
     basis_adjustment: bn.Amount = field(
         default_factory=lambda: bn.Amount(bn.ZERO, _MAIN_CCY)
     )
+    shares: Dict[bn.Cost, Decimal] = field(default_factory=dict)
     # v BUY ONLY v
-    shares: Decimal = field(default_factory=lambda: Decimal(bn.ZERO))
     replaced: Decimal = field(default_factory=lambda: Decimal(bn.ZERO))
     # v SELL ONLY v
     code_w: bool = False
@@ -60,7 +61,7 @@ def preprocess(
         filtered_postings = [
             posting for posting in txn.postings if posting.units.currency == commodity
         ]
-        shares: Decimal = bn.ZERO
+        shares: Dict[bn.Cost, Decimal] = defaultdict(Decimal)
         for posting in filtered_postings:
             assert posting.cost is not None, (
                 "All commodity postings must be held at cost."
@@ -85,7 +86,7 @@ def preprocess(
                     )
             else:
                 raise ValueError("Don't know how to handle match result ", match_result, posting)
-            shares += abs(posting.units.number)
+            shares[posting.cost] += abs(posting.units.number)
 
         if txn_type is None or len(filtered_postings) == 0:
             # Neither, so skip.
@@ -145,7 +146,6 @@ def find_candidates(
 ) -> Generator[TxnEntry, None, None]:
     start_date: date = subject.date - timedelta(days=30)
     end_date: date = subject.date + timedelta(days=30)
-    subject_costs = {posting.cost for posting in subject.filtered_postings}
 
     # Records all lots and # of shares available to wash with the subject.
     inv = bn.Inventory()
@@ -175,25 +175,22 @@ def find_candidates(
                         (posting.units.currency, prev_position.cost)
                     )
                     if curr_position is None:
-                        cost_to_buy_txn[prev_position.cost].shares = Decimal()
+                        cost_to_buy_txn[prev_position.cost].shares[prev_position.cost] = Decimal()
 
     # Update buy txns with share counts that are still held or will be in the future.
     # TODO: This value should probably just be returned instead of overloading BUY.shares
     for position in inv.get_positions():
-        cost_to_buy_txn[position.cost].shares = position.units.number
+        cost_to_buy_txn[position.cost].shares[position.cost] = position.units.number
 
     for txn in txns:
         if txn.type != TxnType.BUY:
             continue  # Only wash with BUY txns and not subject (which is a SELL)
         if txn.date < start_date or txn.date > end_date:
             continue  # Transaction outside window
-        if txn.shares <= bn.ZERO or txn.replaced >= txn.shares:
+        total_shares = sum(shares for _, shares in txn.shares.items())
+        if total_shares <= bn.ZERO or txn.replaced > total_shares:
             continue  # No shares left
         assert len(txn.filtered_postings) == 1, "Each BUY should have one posting."
-
-        posting = txn.filtered_postings[0]
-        if posting.cost in subject_costs:
-            continue  # Same lot doesn't wash
 
         yield txn
 
@@ -213,15 +210,32 @@ def calculate_washes(cost_to_buy_txn: Dict[bn.Cost, TxnEntry], txns: List[TxnEnt
         if gain.number >= bn.ZERO:  # can't wash a gain
             continue
 
-        per_share_disallowed_gain = bn.Amount = bn.amount.div(gain, sale.shares)
-        outstanding = sale.shares
+        per_share_disallowed_gain = bn.Amount = bn.amount.div(gain, sum(shares for _, shares in sale.shares.items()))
+        outstanding = copy.deepcopy(sale.shares)
         for candidate in find_candidates(cost_to_buy_txn, sale, txns):
-            if outstanding == bn.ZERO:
-                break  # Exhausted, all shares replaced.
+            replaced = Decimal()
+            for c_cost, c_shares in candidate.shares.items():
+                # replacement share tracking is completely broken
+                # need to do something there…
+                #
+                # For each candidate
+
+                # TODO: this only works because candidates only have one posting, fix.
+                # outstanding is sales consisting of 5s only. need sum then dig down
+                max_replacement = min(c_shares, sum(shares for _, shares in outstanding.items()))
+                if max_replacement == bn.ZERO:
+                    continue
+                if outstanding.get(c_cost, Decimal()) == bn.ZERO:
+                    continue  # not from this candidate
+                cost_replacement = min(max_replacement, outstanding[c_cost])
+                outstanding[c_cost] -= cost_replacement
+                replaced += cost_replacement
+
+            if replaced <= bn.ZERO:
+                continue
+
             sale.code_w = True  # W indicates that this is a wash sale
 
-            replaced = min(candidate.shares - candidate.replaced, outstanding)
-            outstanding -= replaced
             candidate.replaced += replaced
             current_adjustment = bn.amount.Amount(
                 per_share_disallowed_gain.number * replaced,
@@ -260,7 +274,7 @@ def generate_8949(
         basis, proceeds, _ = basis_proceeds(cost_to_buy_txn, txn)
         gain: bn.Amount = bn.amount.sub(proceeds, basis)
         row = [""] * 8
-        row[0] = "{} SHARES OF {}".format(txn.shares, commodity)
+        row[0] = "{} SHARES OF {}".format(sum(shares for _, shares in txn.shares.items()), commodity)
         if len(txn.filtered_postings) > 1:
             row[1] = "VARIOUS"
         else:
@@ -308,8 +322,11 @@ def main(filename: str, commodity: str):
     cost_to_buy_txn_entry: Dict[bn.Cost, TxnEntry] = calculate_cost_to_buy_txn_entry(
         tes
     )
+    print("BEFORE -----")
+    print("\n\n".join(str(te) for te in tes))
     calculate_washes(cost_to_buy_txn_entry, tes)
-    # print("\n\n".join(str(te) for te in tes))
+    print("AFTER -----")
+    print("\n\n".join(str(te) for te in tes))
     print(generate_8949(cost_to_buy_txn_entry, commodity, tes))
 
 
