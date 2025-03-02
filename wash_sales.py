@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 
-from collections import OrderedDict, defaultdict
-import copy
-from dataclasses import dataclass, field
+import sys
+import pandas as pd
+from collections import defaultdict
+from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
-import sys
-from typing import Any, Dict, Generator, List, Optional, Set, Tuple
-from enum import Enum
-import pandas as pd
+from typing import Dict, List, Optional, Set, Tuple
+
 import beancount as bn
 from beancount.core import inventory as bn_inventory
-from beancount.core import position as bn_position
 from beancount.core import data as bn_data
 
 
