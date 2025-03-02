@@ -1,9 +1,7 @@
 include "common.beancount"
 
-; - Buy two lots around the same time.
-; - Sell the first lot, but only partially. It washes against the second lot
-;   purchased which happens to have a significantly higher cost basis of 5000.
-; The loss from the first lot is $10/sh.
+; Like test4 but with the same original cost basis and same sell price to sanity
+; check the logic.
 
 2023-01-01 * "Buy"
     Assets:Checking

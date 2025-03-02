@@ -1,5 +1,112 @@
 include "common.beancount"
 
-; - Buy -> Sell
-; - Buy -> Sell
-; - No washes
+; Suppose a 10b5 trading plan exists with consistent vesting events while the
+; price is trending down, always $10 under FMV. When are the losses realized?
+
+2024-01-25 * "Buy"
+    Assets:Checking
+    Assets:Brokerage:STONK     100 STONK {100 USD, 2024-01-25}
+
+2024-01-25 * "Sell"
+    Assets:Brokerage:STONK     -100 STONK {2024-01-25} @ 90 USD
+    Assets:Checking 9000 USD
+    Income:PnL
+
+2024-02-25 * "Buy"
+    Assets:Checking
+    Assets:Brokerage:STONK     100 STONK {100 USD}
+
+2024-02-25 * "Sell"
+    Assets:Brokerage:STONK     -100 STONK {2024-02-25} @ 90 USD
+    Assets:Checking 9000 USD
+    Income:PnL
+
+2024-03-25 * "Buy"
+    Assets:Checking
+    Assets:Brokerage:STONK     100 STONK {100 USD}
+
+2024-03-25 * "Sell"
+    Assets:Brokerage:STONK     -100 STONK {2024-03-25} @ 90 USD
+    Assets:Checking 9000 USD
+    Income:PnL
+
+2024-04-25 * "Buy"
+    Assets:Checking
+    Assets:Brokerage:STONK     100 STONK {100 USD}
+
+2024-04-25 * "Sell"
+    Assets:Brokerage:STONK     -100 STONK {2024-04-25} @ 90 USD
+    Assets:Checking 9000 USD
+    Income:PnL
+
+2024-05-25 * "Buy"
+    Assets:Checking
+    Assets:Brokerage:STONK     100 STONK {100 USD}
+
+2024-05-25 * "Sell"
+    Assets:Brokerage:STONK     -100 STONK {2024-05-25} @ 90 USD
+    Assets:Checking 9000 USD
+    Income:PnL
+
+2024-06-25 * "Buy"
+    Assets:Checking
+    Assets:Brokerage:STONK     100 STONK {100 USD}
+
+2024-06-25 * "Sell"
+    Assets:Brokerage:STONK     -100 STONK {2024-06-25} @ 90 USD
+    Assets:Checking 9000 USD
+    Income:PnL
+
+2024-07-25 * "Buy"
+    Assets:Checking
+    Assets:Brokerage:STONK     100 STONK {100 USD}
+
+2024-07-25 * "Sell"
+    Assets:Brokerage:STONK     -100 STONK {2024-07-25} @ 90 USD
+    Assets:Checking 9000 USD
+    Income:PnL
+
+2024-08-25 * "Buy"
+    Assets:Checking
+    Assets:Brokerage:STONK     100 STONK {100 USD}
+
+2024-08-25 * "Sell"
+    Assets:Brokerage:STONK     -100 STONK {2024-08-25} @ 90 USD
+    Assets:Checking 9000 USD
+    Income:PnL
+
+2024-09-25 * "Buy"
+    Assets:Checking
+    Assets:Brokerage:STONK     100 STONK {100 USD}
+
+2024-09-25 * "Sell"
+    Assets:Brokerage:STONK     -100 STONK {2024-09-25} @ 90 USD
+    Assets:Checking 9000 USD
+    Income:PnL
+
+2024-10-25 * "Buy"
+    Assets:Checking
+    Assets:Brokerage:STONK     100 STONK {100 USD}
+
+2024-10-25 * "Sell"
+    Assets:Brokerage:STONK     -100 STONK {2024-10-25} @ 90 USD
+    Assets:Checking 9000 USD
+    Income:PnL
+
+2024-11-25 * "Buy"
+    Assets:Checking
+    Assets:Brokerage:STONK     100 STONK {100 USD}
+
+2024-11-25 * "Sell"
+    Assets:Brokerage:STONK     -100 STONK {2024-11-25} @ 90 USD
+    Assets:Checking 9000 USD
+    Income:PnL
+
+2024-12-25 * "Buy"
+    Assets:Checking
+    Assets:Brokerage:STONK     100 STONK {100 USD}
+
+2024-12-25 * "Sell"
+    Assets:Brokerage:STONK     -100 STONK {2024-12-25} @ 90 USD
+    Assets:Checking 9000 USD
+    Income:PnL
