@@ -41,6 +41,91 @@ class Form8949Entry:
     gl: bn.Amount
 
 
+def find_replacement_shares(
+    txns: List[bn.dtypes.Transaction],
+    sale_txn: bn.dtypes.Transaction,
+    inv: bn.Inventory,
+    inv_wash: bn.Inventory,
+    num_shares: Decimal,
+    commodity: str,
+) -> List[bn.Position]:
+    oldest_date = sale_txn.date - timedelta(days=30)
+    newest_date = sale_txn.date + timedelta(days=30)
+
+    # Find all positions within the window.
+    pos_within_window: List[bn.Position] = list()
+    sale_index = txns.index(sale_txn)
+    for i in range(sale_index + 1, len(txns)):
+        txn = txns[i]
+        for posting in txn.postings:
+            if posting.units.currency != commodity:
+                continue
+            if posting.units.number > bn.ZERO and posting.cost.date <= newest_date:
+                # A buy.
+                pos_within_window.append(
+                    bn.Position(units=posting.units, cost=posting.cost)
+                )
+    for position in inv.get_positions():
+        if position.cost.date >= oldest_date and position.cost.date <= newest_date:
+            pos_within_window.append(position)
+
+    # Exclude those that acted as replacement shares before.
+    pos_not_replaced: List[bn.Position] = list()
+    for position in pos_within_window:
+        key = (position.units.currency, position.cost)
+        if key not in inv_wash:
+            pos_not_replaced.append(position)
+            continue
+        wash_position: bn.Position = inv_wash[key]
+        if position.units.number > wash_position.units.number:
+            pos_not_replaced.append(
+                bn.Position(
+                    bn.amount.sub(position.units, wash_position.units), position.cost
+                )
+            )
+
+    pos_candidates: List[bn.Position] = list()
+    outstanding_shares = Decimal(num_shares)
+    for position in sorted(pos_not_replaced, key=lambda p: p.cost):
+        position: bn.Position
+        if outstanding_shares <= bn.ZERO:
+            break
+        if position.units.number <= outstanding_shares:
+            pos_candidates.append(position)
+        else:
+            pos_candidates.append(
+                bn.Position(
+                    units=bn.amount.Amount(outstanding_shares, position.units.currency),
+                    cost=position.cost,
+                )
+            )
+        outstanding_shares -= position.units.number
+    return pos_candidates
+
+
+# Applies the basis adjustment to the replacement shares, marks them, and returns the GL adjustment for this sale.
+def apply_replacement_shares(
+    inv_wash: bn.Inventory,
+    cost_to_basis_adjustment: Dict[bn.Cost, Decimal],
+    ordered_available_replacement_shares: List[bn.Position],
+    num_shares: Decimal,
+    gl: Decimal,
+) -> Decimal:
+    # Disallowed loss/sh
+    gl_sh = gl / num_shares
+    gl_adjustment = Decimal()
+    for position in ordered_available_replacement_shares:
+        # Update record of replaced shares.
+        inv_wash.add_position(position)
+        # Amount to adjust for this particular replacement position.
+        per_sh_gl_adjustment = position.units.number * gl_sh
+        # Adjust the basis of the replacement shares.
+        cost_to_basis_adjustment[position.cost] -= per_sh_gl_adjustment
+        # Adjust the g/l of the wash sale.
+        gl_adjustment += per_sh_gl_adjustment
+    return gl_adjustment
+
+
 def main(filename: str, commodity: str):
     entries, errors, option_map = bn.load_file(filename)
     if len(errors) != 0:
@@ -51,14 +136,17 @@ def main(filename: str, commodity: str):
         list(bn_data.sorted(bn.filter_txns(entries))), commodity
     )
 
+    # The current inventory.
     inv = bn.Inventory()
-    cost_to_basis_adjustment: Dict[bn.Cost, Decimal] = dict()
+    # A record of replacement share costs and how many.
+    inv_wash = bn.Inventory()
+    cost_to_basis_adjustment: Dict[bn.Cost, Decimal] = defaultdict(Decimal)
     for txn in txns:
         # Count the number of postings that are sales and non-sales.
         sale_count = 0
         non_sale_count = 0
 
-        inv_prev = bn.Inventory()
+        inv_sold = bn.Inventory()
         cost_to_sell_price: Dict[bn.Cost, Decimal] = dict()
         for posting in txn.postings:
             if posting.units.currency != commodity:
@@ -76,7 +164,7 @@ def main(filename: str, commodity: str):
 
             assert match == bn_inventory.MatchResult.REDUCED, "Expected REDUCED."
             assert posting.price is not None, "All postings require prices."
-            inv_prev.add_position(prev)
+            inv_sold.add_position(bn.Position(units=-posting.units, cost=posting.cost))
             cost_to_sell_price[prev.cost] = posting.price.number
             sale_count += 1
 
@@ -95,7 +183,7 @@ def main(filename: str, commodity: str):
         b_adjustment = Decimal()
         proceeds = Decimal()
         acquisition_dates: Set[date] = set()
-        for position in inv_prev.get_positions():
+        for position in inv_sold.get_positions():
             assert position.cost.currency == _MAIN_CCY
             num_shares += position.units.number
             basis += position.units.number * position.cost.number
@@ -111,6 +199,24 @@ def main(filename: str, commodity: str):
         # if b_adjustment is set, set B flag.
         # apply b_adjustment.
         basis += b_adjustment
+        gl_adjustment = Decimal()
+        gl: Decimal = proceeds - basis
+
+        code_w = False
+        if gl < bn.ZERO:  # Possible wash sale
+            ordered_available_replacement_shares = find_replacement_shares(
+                txns, txn, inv, inv_wash, num_shares, commodity
+            )
+            if len(ordered_available_replacement_shares) > 0:
+                # A wash sale with a full or partial replacement.
+                code_w = True
+                gl_adjustment = apply_replacement_shares(
+                    inv_wash,
+                    cost_to_basis_adjustment,
+                    ordered_available_replacement_shares,
+                    num_shares,
+                    gl,
+                )
 
         e = Form8949Entry(
             property=bn.amount.Amount(num_shares, commodity),
@@ -119,9 +225,9 @@ def main(filename: str, commodity: str):
             proceeds=bn.amount.Amount(proceeds, _MAIN_CCY),
             basis=bn.amount.Amount(basis, _MAIN_CCY),
             code_b=b_adjustment > bn.ZERO,
-            code_w=False,
-            gl_adjustment=bn.amount.Amount(bn.ZERO, _MAIN_CCY),
-            gl=bn.amount.Amount(proceeds - basis, _MAIN_CCY),
+            code_w=code_w,
+            gl_adjustment=bn.amount.Amount(gl_adjustment, _MAIN_CCY),
+            gl=bn.amount.Amount(gl, _MAIN_CCY),
         )
         print(e)
 
