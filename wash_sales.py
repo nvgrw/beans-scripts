@@ -125,13 +125,16 @@ def apply_replacement_shares(
         gl_adjustment -= per_sh_gl_adjustment
     return gl_adjustment
 
+
 def entries_to_dataframe(entries: List[Form8949Entry]) -> Optional[pd.DataFrame]:
     if len(entries) == 0:
         return None
 
     def entry_to_row(entry: Form8949Entry) -> List[str]:
         row = [""] * 8
-        row[0] = "{} SHARES OF {}".format(entry.property.number, entry.property.currency)
+        row[0] = "{} SHARES OF {}".format(
+            entry.property.number, entry.property.currency
+        )
         if len(entry.acquired) > 1:
             row[1] = "VARIOUS"
         else:
@@ -142,7 +145,9 @@ def entries_to_dataframe(entries: List[Form8949Entry]) -> Optional[pd.DataFrame]
         row[5] = ("B" if entry.code_b else "") + ("W" if entry.code_w else "")
         row[6] = str(entry.gl_adjustment.number.quantize(Decimal("0.00")))
         row[7] = str(
-            bn.amount.add(entry.gl, entry.gl_adjustment).number.quantize(Decimal("0.00"))
+            bn.amount.add(entry.gl, entry.gl_adjustment).number.quantize(
+                Decimal("0.00")
+            )
         )
         return row
 
@@ -254,17 +259,19 @@ def main(filename: str, commodity: str):
                     gl,
                 )
 
-        form_entries.append(Form8949Entry(
-            property=bn.amount.Amount(num_shares, commodity),
-            acquired=acquisition_dates,
-            sold=txn.date,
-            proceeds=bn.amount.Amount(proceeds, _MAIN_CCY),
-            basis=bn.amount.Amount(basis, _MAIN_CCY),
-            code_b=b_adjustment > bn.ZERO,
-            code_w=code_w,
-            gl_adjustment=bn.amount.Amount(gl_adjustment, _MAIN_CCY),
-            gl=bn.amount.Amount(gl, _MAIN_CCY),
-        ))
+        form_entries.append(
+            Form8949Entry(
+                property=bn.amount.Amount(num_shares, commodity),
+                acquired=acquisition_dates,
+                sold=txn.date,
+                proceeds=bn.amount.Amount(proceeds, _MAIN_CCY),
+                basis=bn.amount.Amount(basis, _MAIN_CCY),
+                code_b=b_adjustment > bn.ZERO,
+                code_w=code_w,
+                gl_adjustment=bn.amount.Amount(gl_adjustment, _MAIN_CCY),
+                gl=bn.amount.Amount(gl, _MAIN_CCY),
+            )
+        )
 
     print(entries_to_dataframe(form_entries))
 
