@@ -1,0 +1,30 @@
+include "common.beancount"
+
+; - Buy two lots around the same time.
+; - Sell the first lot, but only partially. It washes against the second lot
+;   purchased which happens to have a significantly higher cost basis of 5000.
+; The loss from the first lot is $10/sh.
+
+2023-01-01 * "Buy"
+    Assets:Checking
+    Assets:Brokerage:STONK     10 STONK {100 USD, 2023-01-01}
+
+2023-01-02 * "Buy"
+    Assets:Checking
+    Assets:Brokerage:STONK     10 STONK {500 USD, 2023-01-02}
+
+2023-01-03 * "Sell"
+    Assets:Brokerage:STONK    -5 STONK {2023-01-01} @ 90 USD
+    Assets:Checking         450 USD
+    Income:PnL
+
+2023-01-04 * "Sell"
+    Assets:Brokerage:STONK    -5 STONK {2023-01-02} @ 90 USD
+    Assets:Checking         450 USD
+    Income:PnL
+
+2023-01-05 * "Sell"
+    Assets:Brokerage:STONK    -5 STONK {2023-01-01} @ 90 USD
+    Assets:Brokerage:STONK    -5 STONK {2023-01-02} @ 90 USD
+    Assets:Checking         900 USD
+    Income:PnL

@@ -1,0 +1,14 @@
+include "common.beancount"
+
+; - Buy  10 STONK.
+; - Sell 10 STONK from the same lot.
+; - Observe no wash, no adjustment of basis.
+
+2023-01-01 * "Buy"
+    Assets:Checking
+    Assets:Brokerage:STONK     10 STONK {100 USD, 2023-01-01}
+
+2023-01-02 * "Sell"
+    Assets:Brokerage:STONK    -10 STONK {2023-01-01} @ 90 USD
+    Assets:Checking         900 USD
+    Income:PnL
