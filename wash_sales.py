@@ -48,12 +48,15 @@ def find_replacement_shares(
     inv_wash: bn.Inventory,
     inv_sold: bn.Inventory,
     commodity: str,
-) -> List[bn.Position]:
+) -> List[Tuple[bn.Position, Decimal]]:
     oldest_date = sale_txn.date - timedelta(days=30)
     newest_date = sale_txn.date + timedelta(days=30)
 
+    # In this function Tuple[Pos, Pos] = replacement, original number of shares.
+    # This way cb adjustments make sense.
+
     # Find all positions within the window.
-    pos_within_window: List[bn.Position] = list()
+    pos_within_window: List[Tuple[bn.Position, Decimal]] = list()
     sale_index = txns.index(sale_txn)
     for i in range(sale_index + 1, len(txns)):
         txn = txns[i]
@@ -63,57 +66,72 @@ def find_replacement_shares(
             if posting.units.number > bn.ZERO and posting.cost.date <= newest_date:
                 # A buy.
                 pos_within_window.append(
-                    bn.Position(units=posting.units, cost=posting.cost)
+                    (
+                        bn.Position(units=posting.units, cost=posting.cost),
+                        posting.units.number,
+                    )
                 )
     for position in inv.get_positions():
         if position.cost.date >= oldest_date and position.cost.date <= newest_date:
-            pos_within_window.append(position)
+            pos_within_window.append((position, position.units.number))
 
     # Exclude those that acted as replacement shares.
-    pos_not_replaced: List[bn.Position] = list()
-    for position in pos_within_window:
+    pos_not_replaced: List[Tuple[bn.Position, bn.Position]] = list()
+    for position, orig_num_shares in pos_within_window:
         key = (position.units.currency, position.cost)
         if key not in inv_wash:
-            pos_not_replaced.append(position)
+            pos_not_replaced.append((position, orig_num_shares))
             continue
         wash_position: bn.Position = inv_wash[key]
         if position.units.number > wash_position.units.number:
             pos_not_replaced.append(
-                bn.Position(
-                    bn.amount.sub(position.units, wash_position.units), position.cost
+                (
+                    bn.Position(
+                        bn.amount.sub(position.units, wash_position.units),
+                        position.cost,
+                    ),
+                    orig_num_shares,
                 )
             )
 
-    pos_candidates: List[bn.Position] = list()
+    pos_candidates: List[Tuple[bn.Position, Decimal]] = list()
     for outstanding_pos in inv_sold.get_positions():
         # Remainder for next matching position.
-        remaining_pos_not_replaced: List[bn.Position] = list()
+        remaining_pos_not_replaced: List[Tuple[bn.Position, Decimal]] = list()
 
         outstanding_shares = Decimal(outstanding_pos.units.number)
-        for position in sorted(pos_not_replaced, key=lambda p: p.cost):
+        for position, orig_num_shares in sorted(
+            pos_not_replaced, key=lambda t: t[0].cost
+        ):
             position: bn.Position
             if outstanding_shares <= bn.ZERO or position.cost == outstanding_pos.cost:
                 # If nothing left or same cost, don't have a candidate.
-                remaining_pos_not_replaced.append(position)
+                remaining_pos_not_replaced.append((position, orig_num_shares))
                 continue
             if position.units.number <= outstanding_shares:
-                pos_candidates.append(position)
+                pos_candidates.append((position, orig_num_shares))
             else:
                 pos_candidates.append(
-                    bn.Position(
-                        units=bn.amount.Amount(
-                            outstanding_shares, position.units.currency
+                    (
+                        bn.Position(
+                            units=bn.amount.Amount(
+                                outstanding_shares, position.units.currency
+                            ),
+                            cost=position.cost,
                         ),
-                        cost=position.cost,
+                        orig_num_shares,
                     )
                 )
                 remaining_pos_not_replaced.append(
-                    bn.Position(
-                        units=bn.amount.Amount(
-                            position.units.number - outstanding_shares,
-                            position.units.currency,
+                    (
+                        bn.Position(
+                            units=bn.amount.Amount(
+                                position.units.number - outstanding_shares,
+                                position.units.currency,
+                            ),
+                            cost=position.cost,
                         ),
-                        cost=position.cost,
+                        orig_num_shares,
                     )
                 )
             outstanding_shares -= position.units.number
@@ -125,23 +143,23 @@ def find_replacement_shares(
 # Applies the basis adjustment to the replacement shares, marks them, and returns the GL adjustment for this sale.
 def apply_replacement_shares(
     inv_wash: bn.Inventory,
-    cost_to_basis_adjustment: Dict[bn.Cost, Decimal],
-    ordered_available_replacement_shares: List[bn.Position],
+    cost_to_basis_adjustment_sh: Dict[bn.Cost, Decimal],
+    ordered_available_replacement_shares: List[Tuple[bn.Position, Decimal]],
     num_shares: Decimal,
     gl: Decimal,
 ) -> Decimal:
     # Disallowed loss/sh
     gl_sh = gl / num_shares
     gl_adjustment = Decimal()
-    for position in ordered_available_replacement_shares:
+    for position, orig_num_shares in ordered_available_replacement_shares:
         # Update record of replaced shares.
         inv_wash.add_position(position)
         # Amount to adjust for this particular replacement position.
-        per_sh_gl_adjustment = position.units.number * gl_sh
-        # Adjust the basis of the replacement shares.
-        cost_to_basis_adjustment[position.cost] -= per_sh_gl_adjustment
+        cost_to_basis_adjustment_sh[position.cost] -= gl_sh * (
+            position.units.number / orig_num_shares
+        )
         # Adjust the g/l of the wash sale.
-        gl_adjustment -= per_sh_gl_adjustment
+        gl_adjustment -= position.units.number * gl_sh
     return gl_adjustment
 
 
@@ -199,7 +217,7 @@ def main(filename: str, commodity: str):
     inv = bn.Inventory()
     # A record of replacement share costs and how many.
     inv_wash = bn.Inventory()
-    cost_to_basis_adjustment: Dict[bn.Cost, Decimal] = defaultdict(Decimal)
+    cost_to_basis_adjustment_sh: Dict[bn.Cost, Decimal] = defaultdict(Decimal)
     form_entries: List[Form8949Entry] = list()
     for txn in txns:
         # Count the number of postings that are sales and non-sales.
@@ -247,7 +265,10 @@ def main(filename: str, commodity: str):
             assert position.cost.currency == _MAIN_CCY
             num_shares += position.units.number
             basis += position.units.number * position.cost.number
-            b_adjustment += cost_to_basis_adjustment.get(position.cost, Decimal())
+            b_adjustment += (
+                cost_to_basis_adjustment_sh.get(position.cost, Decimal())
+                * position.units.number
+            )
 
             price: Optional[Decimal] = cost_to_sell_price.get(position.cost, None)
             assert price is not None, "No price for sale of position {}".format(
@@ -272,7 +293,7 @@ def main(filename: str, commodity: str):
                 code_w = True
                 gl_adjustment = apply_replacement_shares(
                     inv_wash,
-                    cost_to_basis_adjustment,
+                    cost_to_basis_adjustment_sh,
                     ordered_available_replacement_shares,
                     num_shares,
                     gl,
