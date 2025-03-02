@@ -101,13 +101,18 @@ def find_replacement_shares(
             else:
                 pos_candidates.append(
                     bn.Position(
-                        units=bn.amount.Amount(outstanding_shares, position.units.currency),
+                        units=bn.amount.Amount(
+                            outstanding_shares, position.units.currency
+                        ),
                         cost=position.cost,
                     )
                 )
                 remaining_pos_not_replaced.append(
                     bn.Position(
-                        units=bn.amount.Amount(position.units.number - outstanding_shares, position.units.currency),
+                        units=bn.amount.Amount(
+                            position.units.number - outstanding_shares,
+                            position.units.currency,
+                        ),
                         cost=position.cost,
                     )
                 )
