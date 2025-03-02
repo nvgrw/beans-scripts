@@ -122,8 +122,43 @@ def apply_replacement_shares(
         # Adjust the basis of the replacement shares.
         cost_to_basis_adjustment[position.cost] -= per_sh_gl_adjustment
         # Adjust the g/l of the wash sale.
-        gl_adjustment += per_sh_gl_adjustment
+        gl_adjustment -= per_sh_gl_adjustment
     return gl_adjustment
+
+def entries_to_dataframe(entries: List[Form8949Entry]) -> Optional[pd.DataFrame]:
+    if len(entries) == 0:
+        return None
+
+    def entry_to_row(entry: Form8949Entry) -> List[str]:
+        row = [""] * 8
+        row[0] = "{} SHARES OF {}".format(entry.property.number, entry.property.currency)
+        if len(entry.acquired) > 1:
+            row[1] = "VARIOUS"
+        else:
+            row[1] = list(entry.acquired)[0].strftime("%m/%d/%y")
+        row[2] = entry.sold.strftime("%m/%d/%y")
+        row[3] = str(entry.proceeds.number.quantize(Decimal("0.00")))
+        row[4] = str(entry.basis.number.quantize(Decimal("0.00")))
+        row[5] = ("B" if entry.code_b else "") + ("W" if entry.code_w else "")
+        row[6] = str(entry.gl_adjustment.number.quantize(Decimal("0.00")))
+        row[7] = str(
+            bn.amount.add(entry.gl, entry.gl_adjustment).number.quantize(Decimal("0.00"))
+        )
+        return row
+
+    return pd.DataFrame(
+        data=(entry_to_row(entry) for entry in entries),
+        columns=(
+            "(a) Description of property",
+            "(b) Date acquired",
+            "(c) Date sold or disposed of",
+            "(d) Proceeds",
+            "(e) Cost or other basis",
+            "(f) Code(s)",
+            "(g) Amount of adjustment",
+            "(h) Gain or (loss)",
+        ),
+    )
 
 
 def main(filename: str, commodity: str):
@@ -141,6 +176,7 @@ def main(filename: str, commodity: str):
     # A record of replacement share costs and how many.
     inv_wash = bn.Inventory()
     cost_to_basis_adjustment: Dict[bn.Cost, Decimal] = defaultdict(Decimal)
+    form_entries: List[Form8949Entry] = list()
     for txn in txns:
         # Count the number of postings that are sales and non-sales.
         sale_count = 0
@@ -218,7 +254,7 @@ def main(filename: str, commodity: str):
                     gl,
                 )
 
-        e = Form8949Entry(
+        form_entries.append(Form8949Entry(
             property=bn.amount.Amount(num_shares, commodity),
             acquired=acquisition_dates,
             sold=txn.date,
@@ -228,8 +264,9 @@ def main(filename: str, commodity: str):
             code_w=code_w,
             gl_adjustment=bn.amount.Amount(gl_adjustment, _MAIN_CCY),
             gl=bn.amount.Amount(gl, _MAIN_CCY),
-        )
-        print(e)
+        ))
+
+    print(entries_to_dataframe(form_entries))
 
 
 if __name__ == "__main__":
