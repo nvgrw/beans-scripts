@@ -1,0 +1,9 @@
+beancount==3.1.0
+click==8.1.8
+numpy==2.0.2
+pandas==2.2.3
+python-dateutil==2.9.0.post0
+pytz==2025.1
+regex==2024.11.6
+six==1.17.0
+tzdata==2025.1
