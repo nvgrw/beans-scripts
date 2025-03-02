@@ -46,7 +46,7 @@ def find_replacement_shares(
     sale_txn: bn.dtypes.Transaction,
     inv: bn.Inventory,
     inv_wash: bn.Inventory,
-    num_shares: Decimal,
+    inv_sold: bn.Inventory,
     commodity: str,
 ) -> List[bn.Position]:
     oldest_date = sale_txn.date - timedelta(days=30)
@@ -69,7 +69,7 @@ def find_replacement_shares(
         if position.cost.date >= oldest_date and position.cost.date <= newest_date:
             pos_within_window.append(position)
 
-    # Exclude those that acted as replacement shares before.
+    # Exclude those that acted as replacement shares.
     pos_not_replaced: List[bn.Position] = list()
     for position in pos_within_window:
         key = (position.units.currency, position.cost)
@@ -85,21 +85,35 @@ def find_replacement_shares(
             )
 
     pos_candidates: List[bn.Position] = list()
-    outstanding_shares = Decimal(num_shares)
-    for position in sorted(pos_not_replaced, key=lambda p: p.cost):
-        position: bn.Position
-        if outstanding_shares <= bn.ZERO:
-            break
-        if position.units.number <= outstanding_shares:
-            pos_candidates.append(position)
-        else:
-            pos_candidates.append(
-                bn.Position(
-                    units=bn.amount.Amount(outstanding_shares, position.units.currency),
-                    cost=position.cost,
+    for outstanding_pos in inv_sold.get_positions():
+        # Remainder for next matching position.
+        remaining_pos_not_replaced: List[bn.Position] = list()
+
+        outstanding_shares = Decimal(outstanding_pos.units.number)
+        for position in sorted(pos_not_replaced, key=lambda p: p.cost):
+            position: bn.Position
+            if outstanding_shares <= bn.ZERO or position.cost == outstanding_pos.cost:
+                # If nothing left or same cost, don't have a candidate.
+                remaining_pos_not_replaced.append(position)
+                continue
+            if position.units.number <= outstanding_shares:
+                pos_candidates.append(position)
+            else:
+                pos_candidates.append(
+                    bn.Position(
+                        units=bn.amount.Amount(outstanding_shares, position.units.currency),
+                        cost=position.cost,
+                    )
                 )
-            )
-        outstanding_shares -= position.units.number
+                remaining_pos_not_replaced.append(
+                    bn.Position(
+                        units=bn.amount.Amount(position.units.number - outstanding_shares, position.units.currency),
+                        cost=position.cost,
+                    )
+                )
+            outstanding_shares -= position.units.number
+
+        pos_not_replaced = remaining_pos_not_replaced
     return pos_candidates
 
 
@@ -246,7 +260,7 @@ def main(filename: str, commodity: str):
         code_w = False
         if gl < bn.ZERO:  # Possible wash sale
             ordered_available_replacement_shares = find_replacement_shares(
-                txns, txn, inv, inv_wash, num_shares, commodity
+                txns, txn, inv, inv_wash, inv_sold, commodity
             )
             if len(ordered_available_replacement_shares) > 0:
                 # A wash sale with a full or partial replacement.
