@@ -3,8 +3,12 @@ include "common.beancount"
 ; - Buy  15 STONK across two separate lots in the distant past.
 ; - Sell 15 STONK in a single transaction to exercise average of loss behavior.
 ; - Buy   8 STONK within wash sale window, chronologically after sale.
+; - Buy   2 STONK in a separate transaction, but somehow part of the same lot.
 ; - To wrap up...
-; - Sell  8 STONK and observe no wash but an adjusted non-reported basis.
+; - Sell  10 STONK and observe no wash but an adjusted non-reported basis. Also
+; use the trade-date override for this one because traditionally I use the
+; settlement / deposit date in my ledger and not the date that appears on the
+; 1099.
 
 2021-01-01 * "Buy STONK"
     Assets:Checking        -1000 USD
@@ -28,7 +32,8 @@ include "common.beancount"
     Assets:Checking         -100 USD
     Assets:Brokerage:STONK      2 STONK {50 USD, 2023-01-25}
 
-2023-01-04 * "Sell STONK"
+2023-01-10 * "Sell STONK"
+    trade-date: 2023-01-04
     Assets:Brokerage:STONK     -10 STONK {2023-01-25} @ 100 USD
     Assets:Checking          800 USD
     Income:PnL
