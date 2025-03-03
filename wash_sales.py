@@ -245,19 +245,30 @@ def calculate_8949_entries(
                 continue
             prev, match = inv.add_position(posting)
             assert match != bn_inventory.MatchResult.IGNORED, "IGNORED not supported."
-            assert match != bn_inventory.MatchResult.AUGMENTED, (
-                "AUGMENTED not supported."
-            )
 
             if match == bn_inventory.MatchResult.CREATED:
-                # Not a sale.
                 non_sale_count += 1
+                continue
+            if match == bn_inventory.MatchResult.AUGMENTED:
+                non_sale_count += 1
+                if posting.cost not in cost_to_basis_adjustment_sh:
+                    continue
+                # Dilute cost_to_basis_adjustment_sh to match the new amount of
+                # shares.
+                adjustment_sh = cost_to_basis_adjustment_sh[posting.cost]
+                prev_num_shares = prev.units.number
+                curr_num_shares = inv[
+                    (posting.units.currency, posting.cost)
+                ].units.number
+                cost_to_basis_adjustment_sh[posting.cost] = (
+                    adjustment_sh * prev_num_shares
+                ) / curr_num_shares
                 continue
 
             assert match == bn_inventory.MatchResult.REDUCED, "Expected REDUCED."
             assert posting.price is not None, "All postings require prices."
             inv_sold.add_position(bn.Position(units=-posting.units, cost=posting.cost))
-            cost_to_sell_price[prev.cost] = posting.price.number
+            cost_to_sell_price[posting.cost] = posting.price.number
             sale_count += 1
 
         if sale_count > 0 and non_sale_count > 0:
