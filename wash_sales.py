@@ -243,7 +243,7 @@ def calculate_8949_entries(
         for posting in txn.postings:
             if posting.units.currency != commodity:
                 continue
-            prev, match = inv.add_position(posting)
+            _, match = inv.add_position(posting)
             assert match != bn_inventory.MatchResult.IGNORED, "IGNORED not supported."
             assert match != bn_inventory.MatchResult.AUGMENTED, (
                 "AUGMENTED not supported."
@@ -257,7 +257,7 @@ def calculate_8949_entries(
             assert match == bn_inventory.MatchResult.REDUCED, "Expected REDUCED."
             assert posting.price is not None, "All postings require prices."
             inv_sold.add_position(bn.Position(units=-posting.units, cost=posting.cost))
-            cost_to_sell_price[prev.cost] = posting.price.number
+            cost_to_sell_price[posting.cost] = posting.price.number
             sale_count += 1
 
         if sale_count > 0 and non_sale_count > 0:
