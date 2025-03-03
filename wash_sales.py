@@ -33,6 +33,7 @@ from beancount.core import inventory as bn_inventory
 from beancount.core import data as bn_data
 
 _MAIN_CCY = "USD"
+_TRADE_DATE_META = "trade-date"
 
 
 @dataclass
@@ -66,8 +67,8 @@ def find_replacement_shares(
     inv_sold: bn.Inventory,
     commodity: str,
 ) -> List[Tuple[bn.Position, Decimal]]:
-    oldest_date = sale_txn.date - timedelta(days=30)
-    newest_date = sale_txn.date + timedelta(days=30)
+    oldest_date = sale_date(sale_txn) - timedelta(days=30)
+    newest_date = sale_date(sale_txn) + timedelta(days=30)
 
     # In this function Tuple[Pos, Pos] = replacement, original number of shares.
     # This way cb adjustments make sense.
@@ -220,6 +221,13 @@ def entries_to_dataframe(entries: List[Form8949Entry]) -> Optional[pd.DataFrame]
     )
 
 
+def sale_date(txn: bn.dtypes.Transaction) -> date:
+    date_override = txn.meta.get(_TRADE_DATE_META, None)
+    if date_override is not None and isinstance(date_override, date):
+        return date_override
+    return txn.date
+
+
 def calculate_8949_entries(
     entries: bn.Directives, commodity: str
 ) -> List[Form8949Entry]:
@@ -328,7 +336,7 @@ def calculate_8949_entries(
             Form8949Entry(
                 property=bn.amount.Amount(num_shares, commodity),
                 acquired=acquisition_dates,
-                sold=txn.date,
+                sold=sale_date(txn),
                 proceeds=bn.amount.Amount(proceeds, _MAIN_CCY),
                 basis=bn.amount.Amount(basis, _MAIN_CCY),
                 code_b=b_adjustment > bn.ZERO,
