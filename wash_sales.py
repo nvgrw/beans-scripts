@@ -12,17 +12,6 @@ import beancount as bn
 from beancount.core import inventory as bn_inventory
 from beancount.core import data as bn_data
 
-
-def get_commodity_transactions(
-    entries: List[bn.dtypes.Transaction], commodity: str
-) -> List[bn.dtypes.Transaction]:
-    return [
-        entry
-        for entry in entries
-        if any(p.units.currency == commodity for p in entry.postings)
-    ]
-
-
 _MAIN_CCY = "USD"
 
 
@@ -37,6 +26,16 @@ class Form8949Entry:
     code_w: bool
     gl_adjustment: bn.Amount
     gl: bn.Amount
+
+
+def get_commodity_transactions(
+    entries: List[bn.dtypes.Transaction], commodity: str
+) -> List[bn.dtypes.Transaction]:
+    return [
+        entry
+        for entry in entries
+        if any(p.units.currency == commodity for p in entry.postings)
+    ]
 
 
 def find_replacement_shares(
@@ -201,12 +200,9 @@ def entries_to_dataframe(entries: List[Form8949Entry]) -> Optional[pd.DataFrame]
     )
 
 
-def main(filename: str, commodity: str):
-    entries, errors, option_map = bn.load_file(filename)
-    if len(errors) != 0:
-        print(errors, file=sys.stderr)
-        sys.exit(1)
-
+def calculate_8949_entries(
+    entries: bn.Directives, commodity: str
+) -> List[Form8949Entry]:
     txns: List[bn.dtypes.Transaction] = get_commodity_transactions(
         list(bn_data.sorted(bn.filter_txns(entries))), commodity
     )
@@ -311,6 +307,16 @@ def main(filename: str, commodity: str):
             )
         )
 
+    return form_entries
+
+
+def main(filename: str, commodity: str):
+    entries, errors, option_map = bn.load_file(filename)
+    if len(errors) != 0:
+        print(errors, file=sys.stderr)
+        sys.exit(1)
+
+    form_entries: List[Form8949Entry] = calculate_8949_entries(entries, commodity)
     print(entries_to_dataframe(form_entries))
 
 
