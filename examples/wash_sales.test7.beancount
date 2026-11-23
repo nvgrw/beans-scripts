@@ -35,5 +35,5 @@ include "common.beancount"
 2023-01-10 * "Sell STONK"
     trade-date: 2023-01-04
     Assets:Brokerage:STONK     -10 STONK {2023-01-25} @ 100 USD
-    Assets:Checking          800 USD
+    Assets:Checking         1000 USD
     Income:PnL
