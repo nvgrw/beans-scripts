@@ -512,3 +512,77 @@ def test_unadjusted_basis_code_b_mode():
     assert res_b.entries[1].code_b is True
     assert res_b.entries[1].gl_adjustment.number == Decimal("-100")
     assert res_b.entries[1].gl.number == Decimal("-4200")
+
+
+def test_same_day_multi_grant_liquidation_does_not_intra_day_wash():
+    """Separate same-day sell txns liquidating multiple RSU grants must not wash into each other."""
+    entries = _load_str(
+        """
+        2025-12-25 * "Vest Grant A"
+            Assets:Checking
+            Assets:Brokerage:STONK   10 STONK {100 USD, 2025-12-25}
+
+        2025-12-25 * "Vest Grant B"
+            Assets:Checking
+            Assets:Brokerage:STONK   20 STONK {100 USD, 2025-12-25}
+
+        2025-12-25 * "Vest Grant C"
+            Assets:Checking
+            Assets:Brokerage:STONK   30 STONK {100 USD, 2025-12-25}
+
+        2025-12-25 * "Sell Grant A"
+            Assets:Brokerage:STONK  -10 STONK {2025-12-25} @ 90 USD
+            Assets:Checking         900 USD
+            Income:PnL
+
+        2025-12-25 * "Sell Grant B"
+            Assets:Brokerage:STONK  -20 STONK {2025-12-25} @ 90 USD
+            Assets:Checking        1800 USD
+            Income:PnL
+
+        2025-12-25 * "Sell Grant C"
+            Assets:Brokerage:STONK  -30 STONK {2025-12-25} @ 90 USD
+            Assets:Checking        2700 USD
+            Income:PnL
+
+        2026-01-25 * "Next month vest (31 days later -> outside window)"
+            Assets:Checking
+            Assets:Brokerage:STONK   60 STONK {95 USD, 2026-01-25}
+        """
+    )
+    res = ws.calculate_wash_sales(entries, "STONK")
+    _assert_conservation_invariant(res)
+    assert len(res.entries) == 3
+    assert all(not e.code_w for e in res.entries)
+    assert [e.gl.number for e in res.entries] == [Decimal("-100"), Decimal("-200"), Decimal("-300")]
+    assert len(res.open_lots) == 1
+    assert res.open_lots[0].is_replacement is False
+
+
+def test_same_day_multi_grant_partial_liquidation_still_washes_kept_grant():
+    """Selling Grant A at a loss while keeping Grant B (vested same day) MUST still wash into Grant B."""
+    entries = _load_str(
+        """
+        2025-12-25 * "Vest Grant A"
+            Assets:Checking
+            Assets:Brokerage:STONK   10 STONK {100 USD, 2025-12-25}
+
+        2025-12-25 * "Vest Grant B (kept)"
+            Assets:Checking
+            Assets:Brokerage:STONK   10 STONK {100 USD, 2025-12-25}
+
+        2025-12-25 * "Sell only Grant A at a loss"
+            Assets:Brokerage:STONK  -10 STONK {2025-12-25} @ 90 USD
+            Assets:Checking         900 USD
+            Income:PnL
+        """
+    )
+    res = ws.calculate_wash_sales(entries, "STONK")
+    _assert_conservation_invariant(res)
+    assert len(res.entries) == 1
+    assert res.entries[0].code_w is True
+    assert res.entries[0].disallowed_loss.number == Decimal("100")
+    assert res.entries[0].gl.number == Decimal("0")
+    assert len(res.open_lots) == 1
+    assert res.open_lots[0].is_replacement is True
+    assert res.open_lots[0].adjusted_unit_cost == Decimal("110")

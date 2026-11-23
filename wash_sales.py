@@ -28,6 +28,7 @@ from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from enum import Enum
 import io
+from itertools import groupby
 import sys
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -326,52 +327,57 @@ def calculate_wash_sales(
 
     form_entries: List[Form8949Entry] = []
 
-    for event in events:
-        if not event.is_sell:
-            # Transition all sub-lots originating from this buy event from PENDING -> OPEN.
-            for orig_lot in event.buy_lots:
-                for sub_lot in buy_event_purchases[orig_lot.purchase_id]:
-                    if sub_lot.state == LotState.PENDING:
-                        sub_lot.state = LotState.OPEN
+    for (event_date, is_sell), group_iter in groupby(
+        events, key=lambda e: (e.event_date, e.is_sell)
+    ):
+        day_events = list(group_iter)
+        if not is_sell:
+            # Transition all sub-lots originating from buy events on this day from PENDING -> OPEN.
+            for event in day_events:
+                for orig_lot in event.buy_lots:
+                    for sub_lot in buy_event_purchases[orig_lot.purchase_id]:
+                        if sub_lot.state == LotState.PENDING:
+                            sub_lot.state = LotState.OPEN
             continue
 
-        # ---- PROCESS SALE EVENT ----
-        # Step 1: Close ALL sold shares for this transaction BEFORE matching wash sales
-        # so that a lot sold in this transaction cannot act as a replacement share for
-        # another lot sold in the same transaction.
+        # ---- PROCESS ALL SALES ON THIS DATE TOGETHER ----
+        # Step 1: Close ALL sold shares across all same-day sale transactions BEFORE
+        # matching wash sales, so that separate same-day sell transactions (e.g., multiple
+        # RSU grants liquidated together under a 10b5-1 plan) do not wash into each other.
         sold_chunks: List[_SoldChunk] = []
-        for leg in event.sell_legs:
-            remaining = leg.shares
-            matching_open = sorted(
-                (
-                    lot
-                    for lot in all_lots
-                    if lot.state == LotState.OPEN
-                    and lot.shares > Decimal(0)
-                    and lot.orig_cost == leg.orig_cost
-                ),
-                # FIFO by effective holding date (tacked washed sub-lots first), then acquisition/buy order.
-                key=lambda l: (l.holding_date, l.acquired_date, l.buy_seq, l.lot_id),
-            )
-            for lot in matching_open:
-                if remaining <= Decimal(0):
-                    break
-                if lot.shares <= remaining:
-                    lot.state = LotState.CLOSED
-                    sold_chunks.append(_SoldChunk(lot=lot, sell_price=leg.sell_price))
-                    remaining -= lot.shares
-                else:
-                    taken, next_lot_id = _split_lot(lot, remaining, all_lots, next_lot_id)
-                    buy_event_purchases[taken.purchase_id].append(taken)
-                    taken.state = LotState.CLOSED
-                    sold_chunks.append(_SoldChunk(lot=taken, sell_price=leg.sell_price))
-                    remaining = Decimal(0)
-
-            if remaining > Decimal(0):
-                raise ValueError(
-                    f"Insufficient open shares of {commodity} with cost {leg.orig_cost} "
-                    f"on {event.event_date} (short by {remaining} shares) in {event.txn}"
+        for event in day_events:
+            for leg in event.sell_legs:
+                remaining = leg.shares
+                matching_open = sorted(
+                    (
+                        lot
+                        for lot in all_lots
+                        if lot.state == LotState.OPEN
+                        and lot.shares > Decimal(0)
+                        and lot.orig_cost == leg.orig_cost
+                    ),
+                    # FIFO by effective holding date (tacked washed sub-lots first), then acquisition/buy order.
+                    key=lambda l: (l.holding_date, l.acquired_date, l.buy_seq, l.lot_id),
                 )
+                for lot in matching_open:
+                    if remaining <= Decimal(0):
+                        break
+                    if lot.shares <= remaining:
+                        lot.state = LotState.CLOSED
+                        sold_chunks.append(_SoldChunk(lot=lot, sell_price=leg.sell_price))
+                        remaining -= lot.shares
+                    else:
+                        taken, next_lot_id = _split_lot(lot, remaining, all_lots, next_lot_id)
+                        buy_event_purchases[taken.purchase_id].append(taken)
+                        taken.state = LotState.CLOSED
+                        sold_chunks.append(_SoldChunk(lot=taken, sell_price=leg.sell_price))
+                        remaining = Decimal(0)
+
+                if remaining > Decimal(0):
+                    raise ValueError(
+                        f"Insufficient open shares of {commodity} with cost {leg.orig_cost} "
+                        f"on {event.event_date} (short by {remaining} shares) in {event.txn}"
+                    )
 
         # Step 2: Process each sold chunk in chronological order of acquisition
         # (Treas. Reg. § 1.1091-1(c)).
@@ -379,7 +385,7 @@ def calculate_wash_sales(
             key=lambda c: (c.lot.acquired_date, c.lot.buy_seq, c.lot.lot_id)
         )
 
-        sale_dt = event.event_date
+        sale_dt = event_date
         oldest_window = sale_dt - timedelta(days=_WASH_WINDOW_DAYS)
         newest_window = sale_dt + timedelta(days=_WASH_WINDOW_DAYS)
 
